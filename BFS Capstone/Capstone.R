@@ -32,6 +32,7 @@ library(caTools)
 library(MASS)
 library(car)
 library(caret)
+library(DMwR)
 
 ddata <- read.csv("Demographic data.csv", stringsAsFactors = F,na.strings = c("NA",'',"Na",' '))
 cbdata <- read.csv("Credit Bureau data.csv", stringsAsFactors = F,na.strings = c("NA",'',"Na",' '))
@@ -493,3 +494,532 @@ spec <- conf_final$byClass[2]
 acc
 sens
 spec
+
+
+####################### MODEL 2 ###################################
+############ LOGISTIC REGRESSION ON DEMOGRAPHIC DATASET ###########
+ddata_clean <- data %>%
+  dplyr::select(names(ddata[,-12]),Performance.Tag)
+
+# # Bringing the variables in the correct format
+# #Gender
+# ddata_clean$Gender <- as.factor(ddata_clean$Gender)
+
+# #Marital.Status..at.the.time.of.application.
+# ddata_clean$Marital.Status..at.the.time.of.application. <- as.factor(ddata_clean$Marital.Status..at.the.time.of.application.)
+
+# #Education
+# ddata_clean$Education <- as.factor(ddata_clean$Education)
+
+# #Profession
+# ddata_clean$Profession <- as.factor(ddata_clean$Profession)
+
+# #Type.of.residence
+# ddata_clean$Type.of.residence <- as.factor(ddata_clean$Type.of.residence)
+
+# #Performance.Tag
+# ddata_clean$Performance.Tag <- as.factor(ddata_clean$Performance.Tag)
+
+# # Normalising continuous variables 
+# ddata_clean$Age<- scale(ddata_clean$Age)
+# ddata_clean$No.of.dependents<- scale(ddata_clean$No.of.dependents)
+# ddata_clean$Income<- scale(ddata_clean$Income)
+# ddata_clean$No.of.months.in.current.residence<- scale(ddata_clean$No.of.months.in.current.residence)
+# ddata_clean$No.of.months.in.current.company<- scale(ddata_clean$No.of.months.in.current.company)
+
+# # Subsetting the categorical variables to a dataframe
+# ddata_clean_categorical<- 
+#   ddata_clean[,c('Gender','Marital.Status..at.the.time.of.application.','Education'
+#                          ,'Profession', 'Type.of.residence')]
+
+# # Converting the categorical variables to factor
+# ddata_clean_fact<- data.frame(sapply(ddata_clean_categorical, function(x) factor(x)))
+
+# # Creating dummy variables for categorical columns
+# dummies<- data.frame(sapply(ddata_clean_fact, 
+#                             function(x) data.frame(model.matrix(~x-1,data =ddata_clean_fact))[,-1]))
+
+# # The Final dataset
+# ddata_clean_final<- cbind(ddata_clean[,-c(1,3,4,7,8,9)],dummies) 
+# View(ddata_clean_final) #4300 variables of 52 variables
+
+#Splitting the data to create Train and Test data
+set.seed(100)
+
+indices <- sample.split(ddata_clean_final$'Performance.Tag', SplitRatio = 0.7)
+
+train <- ddata_clean_final[indices,]
+test <- ddata_clean_final[!(indices), ]
+
+#Model Creation
+
+#Initial model
+model_1 <- glm(Performance.Tag ~ ., data = train, family = "binomial")
+summary(model_1) #AIC: 16704
+
+#Step-wise selection
+model_2 <- stepAIC(model_1, direction = "both")
+summary(model_2) #AIC: 16682
+
+#Removing Education.xOthers as this variable is less significant
+model_3 <- glm(Performance.Tag ~ Income + No.of.months.in.current.residence + 
+                 No.of.months.in.current.company + Profession.xSE, data = train, family = 'binomial')
+summary(model_3) #AIC : 16683
+vif(model_3)
+
+#Removing Profession.xSE as this variable is having comparatively high p value
+model_4 <- glm(Performance.Tag ~ Income + No.of.months.in.current.residence + No.of.months.in.current.company,
+               data = train, family = 'binomial')
+summary(model_4) #AIC : 16684
+#With 3 significant variables in the model
+temp_demogrpahic_model1 <- model_4
+
+
+### Model Evaluation
+
+#predicted probabilities of Performance for test data
+test_pred = predict(temp_demogrpahic_model1, type = "response", 
+                    newdata = test[,-6])  
+
+# Let's see the summary 
+summary(test_pred)
+
+# Add the prediction probability with the test data set for further model evaluation steps.
+test$prob <- test_pred
+
+# View the test dataset including prediction probabity.
+View(test)
+
+# Let's use the probability cutoff of 50%.
+test_pred_performance <- factor(ifelse(test_pred >= 0.50, "Yes", "No"))
+test_actual_performance <- factor(ifelse(test$Performance.Tag==1,"Yes","No"))
+
+table(test_actual_performance,test_pred_performance)
+#                       test_pred_performance
+#test_actual_performance    No
+#No  19693
+#Yes   867
+
+test_conf <- confusionMatrix(test_pred_performance, test_actual_performance, positive = "Yes")
+test_conf
+
+#Accuracy : 95%
+#Sensitivity : 0%       
+#Specificity : 100%
+
+# Here we can see accuaracy of the model is on higher side (95%) but sensitivity is very less.
+# As per business scenario we have to predict Performance rate hence Sensitivity need to be on
+# on the higher side.  
+
+# Creating cutoff values from 0.01 to 0.80 for plotting and initiallizing a matrix of 100 X 3.
+
+# Summary of test probability
+summary(test_pred)
+
+# create 100s of sequence number between 0.01 and 0.80, which will be used as cut-off value
+# in each iteration to find out optimal value.
+s = seq(.01,.80,length=100)
+
+# Initialize a 100x3 matrix with 0 as default value.
+OUT = matrix(0,100,3)
+
+# Call the perform_fn in a loop and assign the output toOUT matrix for "sensitivity", "specificity", "accuracy".
+for(i in 1:100)
+{
+  OUT[i,] = perform_fn(s[i])
+} 
+
+
+plot(s, OUT[,1],xlab="Cutoff",ylab="Value",cex.lab=1.5,cex.axis=1.5,ylim=c(0,1),type="l",lwd=2,axes=FALSE,col=2) +
+  axis(1,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5) +
+  axis(2,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5) +
+  lines(s,OUT[,2],col="darkgreen",lwd=2) +
+  lines(s,OUT[,3],col=4,lwd=2) 
+
+# Add legends to the plot created earlier.
+
+legend(0.60,0.75,col=c(2,"darkgreen",4,"darkred"),lwd=c(2,2,2,2),c("Sensitivity","Specificity","Accuracy")) 
+
+# Add a box over the plot.
+box()
+
+# Calcualte the cut-off value based on nominal difference between Sensitivity and Specificity.
+cutoff <- s[which(abs(OUT[,1]-OUT[,2])<0.12)]
+
+
+# Let's choose a cutoff value of 0.0419 for final model
+
+test_cutoff_performance <- factor(ifelse(test_pred >=0.0419, "Yes", "No"))
+conf_final <- confusionMatrix(test_cutoff_performance, test_actual_performance, positive = "Yes")
+
+# Get Accuracy, Sensitivity and Specificity from the confusion matrix using 
+
+acc <- conf_final$overall[1]
+sens <- conf_final$byClass[1]
+spec <- conf_final$byClass[2]
+
+# Show Accuracy
+acc
+# Accuracy : 0.522
+# Show Sensitivity
+sens
+# Sensitivity : 0.597
+# Show Specificity
+spec
+# Specificity : 0.5196
+
+
+#################################### MODEL 3 ###################################
+############ LOGISTIC REGRESSION ON DEMOGRAPHIC DATASET (WITH SMOTE) ###########
+demo_smote_train <- train
+table(demo_smote_train$Performance.Tag)
+#Clearly the dataset is unbalanced with number of 0's being much more than number of 1's
+
+train_demo_SMOTE <- SMOTE(Performance.Tag ~ ., demo_smote_train, perc.over = 100,perc.under=200)
+table(train_demo_SMOTE$Performance.Tag)
+#Now the dataset is evenly balanced with equal number of 0 and 1
+
+#Model Building
+logistic_1_Demo_SMOTE <- glm(Performance.Tag ~ ., family = "binomial", data = train_demo_SMOTE) 
+summary(logistic_1_Demo_SMOTE)   #AIC: 11139
+vif(logistic_1_Demo_SMOTE)
+
+# Using stepwise algorithm for removing insignificant variables   
+logistic_2_Demo_SMOTE <- stepAIC(logistic_1_Demo_SMOTE, direction = "both")
+summary(logistic_2_Demo_SMOTE) #AIC: 11123
+vif(logistic_2_Demo_SMOTE)
+# Removing Age as this variable is not significant
+logistic_3_Demo_SMOTE <- glm(formula = Performance.Tag ~ Income + No.of.months.in.current.company + 
+                               Education.xMasters + Education.xPhd + Profession.xSE, family = "binomial", 
+                             data = train_demo_SMOTE)
+summary(logistic_3_Demo_SMOTE) #AIC: 11123
+
+#With 5 significant variables in the model
+temp_demogrpahic_SMOTE_log_model1 <- logistic_3_Demo_SMOTE
+
+### Model Evaluation
+
+test_demo_SMOTE <- test
+#predicted probabilities of Performance for test data
+test_pred = predict(temp_demogrpahic_SMOTE_log_model1, type = "response", 
+                    newdata = test_demo_SMOTE[,-6])  
+
+# Let's see the summary 
+summary(test_pred)
+
+#Removing prob column from test_demo_SMOTE. This column refers to the probabilty of logistic model without SMOTE
+test_demo_SMOTE <- test_demo_SMOTE[ , -which(names(test_demo_SMOTE) %in% c("prob"))]
+
+# Add the prediction probability with the test data set for further model evaluation steps.
+test_demo_SMOTE$prob <- test_pred
+
+# View the test dataset including prediction probabity.
+View(test_demo_SMOTE)
+
+# Let's use the probability cutoff of 50%.
+test_pred_performance <- factor(ifelse(test_pred >= 0.50, "Yes", "No"))
+test_actual_performance <- factor(ifelse(test_demo_SMOTE$Performance.Tag==1,"Yes","No"))
+
+table(test_actual_performance,test_pred_performance)
+#test_pred_performance
+#test_actual_performance    No   Yes
+#No  10366  9327
+#Yes   350   517
+
+test_conf <- confusionMatrix(test_pred_performance, test_actual_performance, positive = "Yes")
+test_conf
+
+#Accuracy : 53%
+#Sensitivity : 59%       
+#Specificity : 52%
+
+# Here we can see accuaracy, sensitivity and specificity of the model is too low.
+
+# Creating cutoff values from 0.33 to 0.62 for plotting and initiallizing a matrix of 100 X 3.
+
+# Summary of test probability
+summary(test_pred)
+
+# create 100s of sequence number between 0.33 and 0.62, which will be used as cut-off value
+# in each iteration to find out optimal value.
+s = seq(.33,.62,length=100)
+
+# Initialize a 100x3 matrix with 0 as default value.
+OUT = matrix(0,100,3)
+
+# Call the perform_fn in a loop and assign the output toOUT matrix for "sensitivity", "specificity", "accuracy".
+for(i in 1:100)
+{
+  OUT[i,] = perform_fn(s[i])
+} 
+
+
+plot(s, OUT[,1],xlab="Cutoff",ylab="Value",cex.lab=1.5,cex.axis=1.5,ylim=c(0,1),type="l",lwd=2,axes=FALSE,col=2) +
+  axis(1,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5) +
+  axis(2,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5) +
+  lines(s,OUT[,2],col="darkgreen",lwd=2) +
+  lines(s,OUT[,3],col=4,lwd=2) 
+
+# Add legends to the plot created earlier.
+legend(0.60,0.75,col=c(2,"darkgreen",4,"darkred"),lwd=c(2,2,2,2),c("Sensitivity","Specificity","Accuracy")) 
+
+# Add a box over the plot.
+box()
+
+# Calcualte the cut-off value based on nominal difference between Sensitivity and Specificity.
+cutoff <- s[which(abs(OUT[,1]-OUT[,2])<0.1)]
+
+# Let's choose a cutoff value of 0.51 for final model
+
+test_cutoff_performance <- factor(ifelse(test_pred >=0.51, "Yes", "No"))
+conf_final <- confusionMatrix(test_cutoff_performance, test_actual_performance, positive = "Yes")
+
+# Get Accuracy, Sensitivity and Specificity from the confusion matrix using 
+
+acc <- conf_final$overall[1]
+sens <- conf_final$byClass[1]
+spec <- conf_final$byClass[2]
+
+# Show Accuracy
+acc
+# Accuracy : 0.58
+# Show Sensitivity
+sens
+# Sensitivity : 0.52
+# Show Specificity
+spec
+# Specificity : 0.58
+
+
+#################################### MODEL 4 ###################################
+############ LOGISTIC REGRESSION ON MERGED DATASET (WITH SMOTE) ################
+combined_SMOTE_log_train <- train_WOE #Taking a backup
+str(combined_SMOTE_log_train)
+table(combined_SMOTE_log_train$Performance.Tag)
+#0     1 
+#45969  2024 
+#Clearly the dataset is not balanced because number of 0 is more than number of 1.
+combined_SMOTE_log_train$Gender = as.factor(combined_SMOTE_log_train$Gender)
+combined_SMOTE_log_train$Marital.Status..at.the.time.of.application. = as.factor(combined_SMOTE_log_train$Marital.Status..at.the.time.of.application.)
+combined_SMOTE_log_train$Education = as.factor(combined_SMOTE_log_train$Education)
+combined_SMOTE_log_train$Profession = as.factor(combined_SMOTE_log_train$Profession)
+combined_SMOTE_log_train$Type.of.residence = as.factor(combined_SMOTE_log_train$Type.of.residence)
+combined_SMOTE_log_train$Performance.Tag = as.factor(combined_SMOTE_log_train$Performance.Tag)
+train_merged_SMOTE <- SMOTE(Performance.Tag ~ ., combined_SMOTE_log_train, perc.over = 100,k=5,perc.under=200)
+table(train_merged_SMOTE$Performance.Tag)
+
+#0    1 
+#4048 4048 
+# The dataset is now balanced with equal number of 0 and 1.
+# Variable data are getting distorted. Need to confirm with mentor
+
+#Model Building
+logistic_1_Merged_SMOTE <- glm(Performance.Tag ~ ., family = "binomial", data = train_merged_SMOTE) 
+summary(logistic_1_Merged_SMOTE)   #AIC: 9929
+vif(logistic_1_Merged_SMOTE)
+
+# Using stepwise algorithm for removing insignificant variables   
+logistic_2_Merged_SMOTE <- stepAIC(logistic_1_Merged_SMOTE, direction = "both")
+summary(logistic_2_Merged_SMOTE) #AIC: 9877
+vif(logistic_2_Merged_SMOTE)
+
+
+#Removing Outstanding.Balance due to very less significance value and high vif value
+logistic_3 <- glm(formula = Performance.Tag ~ Gender + Marital.Status..at.the.time.of.application. + 
+      Income + Education + Profession + Type.of.residence + No.of.months.in.current.company + 
+      No.of.times.90.DPD.or.worse.in.last.6.months + No.of.times.30.DPD.or.worse.in.last.6.months + 
+      No.of.times.90.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+      Avgas.CC.Utilization.in.last.12.months + No.of.trades.opened.in.last.12.months + 
+      No.of.PL.trades.opened.in.last.6.months + No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. + 
+      No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+      Presence.of.open.home.loan + Presence.of.open.auto.loan, 
+    family = "binomial", data = train_merged_SMOTE)
+summary(logistic_3)
+vif(logistic_3)
+
+#Removing No.of.times.30.DPD.or.worse.in.last.6.months due to very less significance value and high vif value
+logistic_4 <- glm(formula = Performance.Tag ~ Gender + Marital.Status..at.the.time.of.application. + 
+                    Income + Education + Profession + Type.of.residence + No.of.months.in.current.company + 
+                    No.of.times.90.DPD.or.worse.in.last.6.months+
+                    No.of.times.90.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                    Avgas.CC.Utilization.in.last.12.months + No.of.trades.opened.in.last.12.months + 
+                    No.of.PL.trades.opened.in.last.6.months + No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. + 
+                    No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                    Presence.of.open.home.loan + Presence.of.open.auto.loan, 
+                  family = "binomial", data = train_merged_SMOTE)
+summary(logistic_4)
+vif(logistic_4)
+
+#Removing No.of.Inquiries.in.last.12.months..excluding.home...auto.loans due to very less significance value and high vif value
+logistic_5 <- glm(formula = Performance.Tag ~ Gender + Marital.Status..at.the.time.of.application. + 
+                    Income + Education + Profession + Type.of.residence + No.of.months.in.current.company + 
+                    No.of.times.90.DPD.or.worse.in.last.6.months+
+                    No.of.times.90.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                    Avgas.CC.Utilization.in.last.12.months + No.of.trades.opened.in.last.12.months + 
+                    No.of.PL.trades.opened.in.last.6.months + No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. + 
+                    Presence.of.open.home.loan + Presence.of.open.auto.loan, 
+                  family = "binomial", data = train_merged_SMOTE)
+summary(logistic_5)
+vif(logistic_5)
+
+#Removing No.of.trades.opened.in.last.12.months due to very less significance value and high vif value
+logistic_6 <- glm(formula = Performance.Tag ~ Gender + Marital.Status..at.the.time.of.application. + 
+                    Income + Education + Profession + Type.of.residence + No.of.months.in.current.company + 
+                    No.of.times.90.DPD.or.worse.in.last.6.months+
+                    No.of.times.90.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                    Avgas.CC.Utilization.in.last.12.months + 
+                    No.of.PL.trades.opened.in.last.6.months + No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. + 
+                    Presence.of.open.home.loan + Presence.of.open.auto.loan, 
+                  family = "binomial", data = train_merged_SMOTE)
+summary(logistic_6)
+vif(logistic_6)
+
+#Removing No.of.times.90.DPD.or.worse.in.last.6.months due to very less significance value and high vif value
+logistic_7 <- glm(formula = Performance.Tag ~ Gender + Marital.Status..at.the.time.of.application. + 
+                    Income + Education + Profession + Type.of.residence + No.of.months.in.current.company + 
+                    No.of.times.90.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                    Avgas.CC.Utilization.in.last.12.months + 
+                    No.of.PL.trades.opened.in.last.6.months + No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. + 
+                    Presence.of.open.home.loan + Presence.of.open.auto.loan, 
+                  family = "binomial", data = train_merged_SMOTE)
+summary(logistic_7)
+vif(logistic_7)
+
+#Removing Income due to very less significance value and high vif value
+logistic_8 <- glm(formula = Performance.Tag ~ Gender + Marital.Status..at.the.time.of.application. + 
+                    Education + Profession + Type.of.residence + No.of.months.in.current.company + 
+                    No.of.times.90.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                    Avgas.CC.Utilization.in.last.12.months + 
+                    No.of.PL.trades.opened.in.last.6.months + No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. + 
+                    Presence.of.open.home.loan + Presence.of.open.auto.loan, 
+                  family = "binomial", data = train_merged_SMOTE)
+summary(logistic_8)
+vif(logistic_8)
+
+#Removing Income due to very less significance value and high vif value
+logistic_9 <- glm(formula = Performance.Tag ~ Gender + Marital.Status..at.the.time.of.application. + 
+                    Profession + Type.of.residence + No.of.months.in.current.company + 
+                    No.of.times.90.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                    Avgas.CC.Utilization.in.last.12.months + 
+                    No.of.PL.trades.opened.in.last.6.months + No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. + 
+                    Presence.of.open.home.loan + Presence.of.open.auto.loan, 
+                  family = "binomial", data = train_merged_SMOTE)
+summary(logistic_9)
+vif(logistic_9)
+
+#Removing Profession due to very less significance value and high vif value
+logistic_10 <- glm(formula = Performance.Tag ~ Gender + Marital.Status..at.the.time.of.application. + 
+                    Type.of.residence + No.of.months.in.current.company + 
+                    No.of.times.90.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                    Avgas.CC.Utilization.in.last.12.months + 
+                    No.of.PL.trades.opened.in.last.6.months + No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. + 
+                    Presence.of.open.home.loan + Presence.of.open.auto.loan, 
+                  family = "binomial", data = train_merged_SMOTE)
+summary(logistic_10)
+vif(logistic_10)
+
+#Removing No.of.months.in.current.company due to very less significance value and high vif value
+logistic_11 <- glm(formula = Performance.Tag ~ Gender + Marital.Status..at.the.time.of.application. + 
+                     Type.of.residence +
+                     No.of.times.90.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                     Avgas.CC.Utilization.in.last.12.months + 
+                     No.of.PL.trades.opened.in.last.6.months + No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. + 
+                     Presence.of.open.home.loan + Presence.of.open.auto.loan, 
+                   family = "binomial", data = train_merged_SMOTE)
+summary(logistic_11)
+vif(logistic_11)
+#With 6 significant variables in the model
+temp_merged_SMOTE_log_model1 <- logistic_11
+
+
+### Model Evaluation
+
+test_merged_SMOTE <- test_No_WOE
+test_merged_SMOTE <- test_merged_SMOTE[ , -which(names(test_merged_SMOTE) %in% c("prob"))]
+
+#predicted probabilities of Performance for test data
+test_pred = predict(temp_merged_SMOTE_log_model1, type = "response", 
+                    newdata = test_merged_SMOTE[,-35])  
+
+# Let's see the summary 
+summary(test_pred)
+
+
+# Add the prediction probability with the test data set for further model evaluation steps.
+test_merged_SMOTE$prob <- test_pred
+
+# View the test dataset including prediction probabity.
+View(test_merged_SMOTE)
+
+# Let's use the probability cutoff of 50%.
+test_pred_performance <- factor(ifelse(test_pred >= 0.50, "Yes", "No"))
+test_actual_performance <- factor(ifelse(test_merged_SMOTE$Performance.Tag==1,"Yes","No"))
+
+table(test_actual_performance,test_pred_performance)
+#test_pred_performance
+#test_actual_performance    No   Yes
+#No  11706  7987
+#Yes   270   597
+
+test_conf <- confusionMatrix(test_pred_performance, test_actual_performance, positive = "Yes")
+test_conf
+
+#Accuracy : 60%
+#Sensitivity : 68%       
+#Specificity : 60%
+# Here we can see accuaracy, sensitivity and specificity of the model is too low.
+
+# Creating cutoff values from 0.27 to 0.91 for plotting and initiallizing a matrix of 100 X 3.
+
+# Summary of test probability
+summary(test_pred)
+
+# create 100s of sequence number between 0.27 and 0.91, which will be used as cut-off value
+# in each iteration to find out optimal value.
+s = seq(.27,.91,length=100)
+
+# Initialize a 100x3 matrix with 0 as default value.
+OUT = matrix(0,100,3)
+
+# Call the perform_fn in a loop and assign the output toOUT matrix for "sensitivity", "specificity", "accuracy".
+for(i in 1:100)
+{
+  OUT[i,] = perform_fn(s[i])
+} 
+
+
+plot(s, OUT[,1],xlab="Cutoff",ylab="Value",cex.lab=1.5,cex.axis=1.5,ylim=c(0,1),type="l",lwd=2,axes=FALSE,col=2) +
+  axis(1,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5) +
+  axis(2,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5) +
+  lines(s,OUT[,2],col="darkgreen",lwd=2) +
+  lines(s,OUT[,3],col=4,lwd=2) 
+
+# Add legends to the plot created earlier.
+legend(0.60,0.75,col=c(2,"darkgreen",4,"darkred"),lwd=c(2,2,2,2),c("Sensitivity","Specificity","Accuracy")) 
+
+# Add a box over the plot.
+box()
+
+# Calcualte the cut-off value based on nominal difference between Sensitivity and Specificity.
+cutoff <- s[which(abs(OUT[,1]-OUT[,2])<0.015)]
+
+# Let's choose a cutoff value of 0.528 for final model
+
+test_cutoff_performance <- factor(ifelse(test_pred >=0.522, "Yes", "No"))
+conf_final <- confusionMatrix(test_cutoff_performance, test_actual_performance, positive = "Yes")
+
+# Get Accuracy, Sensitivity and Specificity from the confusion matrix using 
+
+acc <- conf_final$overall[1]
+sens <- conf_final$byClass[1]
+spec <- conf_final$byClass[2]
+
+# Show Accuracy
+acc
+# Accuracy : 0.64
+# Show Sensitivity
+sens
+# Sensitivity : 0.63
+# Show Specificity
+spec
+# Specificity : 0.64
