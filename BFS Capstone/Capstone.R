@@ -32,7 +32,10 @@ library(caTools)
 library(MASS)
 library(car)
 library(caret)
+library(rpart)
 library(DMwR)
+library(randomForest)
+library(merTools)
 
 ddata <- read.csv("Demographic data.csv", stringsAsFactors = F,na.strings = c("NA",'',"Na",' '))
 cbdata <- read.csv("Credit Bureau data.csv", stringsAsFactors = F,na.strings = c("NA",'',"Na",' '))
@@ -1023,3 +1026,363 @@ sens
 # Show Specificity
 spec
 # Specificity : 0.64
+
+
+
+
+
+
+
+
+
+
+####################################################################################################
+######################################### RANDOM FOREST ############################################
+####################################################################################################
+
+####################################### PREPARING DATA #############################################
+########################################################################
+########################## DEMOGRAPHIC DATA ############################
+########################################################################
+str(data)
+
+# Duplicate data
+randomforest_demographic_data <- data %>%
+  dplyr::select(names(ddata[,-12]),Performance.Tag)
+
+str(randomforest_demographic_data)
+
+# Remove Application ID 
+randomforest_demographic_data <- randomforest_demographic_data[ , -which(names(randomforest_demographic_data) %in% c("Application.ID"))]
+
+# Separate Numeric and Categorical Variables and convert to numeric and factor respectively
+numeric_variables <- c('Age', 'No.of.dependents', 'Income', 'No.of.months.in.current.residence', 'No.of.months.in.current.company')
+categorical_variables <- c('Gender', 'Marital.Status..at.the.time.of.application.', 'Education', 'Profession',
+                 'Type.of.residence', 'Performance.Tag')
+
+randomforest_demographic_data[, numeric_variables] <- lapply(numeric_variables, function(x) as.numeric(as.character(randomforest_demographic_data[, x])))
+randomforest_demographic_data[, categorical_variables] <- lapply(categorical_variables, function(x) as.factor(as.character(randomforest_demographic_data[, x])))
+
+# Mix up the data to remove bias
+set.seed(100)
+randomforest_demographic_data <- randomforest_demographic_data[sample(nrow(randomforest_demographic_data)), ]
+
+# Split into Train and Test
+ntrain <- as.integer(nrow(randomforest_demographic_data)*0.7)
+randomforest_demographic_data_train <- randomforest_demographic_data[1:ntrain, ]
+randomforest_demographic_data_test <- randomforest_demographic_data[(ntrain+1):nrow(randomforest_demographic_data), ]
+
+########################################################################
+############################ COMBINED DATA #############################
+########################################################################
+str(data)
+
+# Duplicate data
+randomforest_data <- data
+str(randomforest_data)
+
+# Remove Age Group, Salary Group and ApplicationID
+randomforest_data <- randomforest_data[ , -which(names(randomforest_data) %in% c("age_group","salary_group","Application.ID"))]
+
+# Separate Numeric and Categorical Variables and convert to numeric and factor respectively
+numeric_variables <- c('Age', 'No.of.dependents', 'Income', 'No.of.months.in.current.residence', 'No.of.months.in.current.company',
+                        'No.of.times.90.DPD.or.worse.in.last.6.months', 'No.of.times.60.DPD.or.worse.in.last.6.months',
+                        'No.of.times.30.DPD.or.worse.in.last.6.months', 'No.of.times.90.DPD.or.worse.in.last.12.months',
+                        'No.of.times.60.DPD.or.worse.in.last.12.months', 'No.of.times.30.DPD.or.worse.in.last.12.months',
+                        'Avgas.CC.Utilization.in.last.12.months','No.of.trades.opened.in.last.6.months',
+                        'No.of.trades.opened.in.last.12.months', 'No.of.PL.trades.opened.in.last.6.months',
+                        'No.of.PL.trades.opened.in.last.12.months', 'No.of.Inquiries.in.last.12.months..excluding.home...auto.loans.',
+                        'No.of.Inquiries.in.last.6.months..excluding.home...auto.loans.', 'Outstanding.Balance',
+                        'Total.No.of.Trades')
+
+categorical_variables <- c('Gender', 'Marital.Status..at.the.time.of.application.', 'Education', 'Profession',
+                            'Type.of.residence','Presence.of.open.auto.loan','Presence.of.open.home.loan','Performance.Tag')
+
+randomforest_data[, numeric_variables] <- lapply(numeric_variables, function(x) as.numeric(as.character(randomforest_data[, x])))
+randomforest_data[, categorical_variables] <- lapply(categorical_variables, function(x) as.factor(as.character(randomforest_data[, x])))
+
+# Mix up the data to remove bias
+set.seed(1)
+randomforest_data <- randomforest_data[sample(nrow(randomforest_data)), ]
+
+# Split into Train and Test
+ntrain <- as.integer(nrow(randomforest_data)*0.7)
+randomforest_data_train <- randomforest_data[1:ntrain, ]
+randomforest_data_test <- randomforest_data[(ntrain+1):nrow(randomforest_data), ]
+
+####################################### BUILDING MODELS ############################################
+##################### MODEL x #######################
+################# Demographic Data ##################
+################## Without SMOTE ####################
+# Build Random Forest Model
+randomforest_demographic_model <- randomForest(Performance.Tag ~ ., data=randomforest_demographic_data_train,
+                                                   proximity=FALSE, ntree=500, mtry=5, do.trace=TRUE, na.action=na.omit)
+randomforest_demographic_model
+
+# Predict on Test Data
+randomforest_demographic_predicted <- predict(randomforest_demographic_model, newdata=randomforest_demographic_data_test)
+table(randomforest_demographic_predicted, randomforest_demographic_data_test$Performance.Tag)
+
+# randomforest_demographic_predicted     0     1
+#                                  0 19704   865
+#                                  1     0     0
+
+# Confusion Matrix
+confmatrix_demographic_randomforest <- confusionMatrix(randomforest_demographic_predicted, randomforest_demographic_data_test$Performance.Tag)
+confmatrix_demographic_randomforest
+# Accuracy : 95.79%
+# Sensitivity: 100%
+# Specificity: 0%
+
+##################### MODEL x #######################
+################# Demographic Data ##################
+#################### With SMOTE #####################
+# Check if data is balanced
+table(randomforest_demographic_data_train$Performance.Tag)
+#     0     1 
+# 45966  2026
+# The data is unbalanced
+
+randomforest_demographic_data_train_SMOTE <- SMOTE(Performance.Tag ~ ., randomforest_demographic_data_train, perc.over = 100,k=5,perc.under=200)
+table(randomforest_demographic_data_train_SMOTE$Performance.Tag)
+#    0    1 
+# 4052 4052 
+
+# Build Random Forest Model
+set.seed(100)
+randomforest_demographic_model_SMOTE <- randomForest(Performance.Tag ~ ., data=randomforest_demographic_data_train_SMOTE, proximity=FALSE,
+                                                ntree=1000, mtry=5, do.trace=TRUE, na.action=na.omit)
+randomforest_demographic_model_SMOTE
+
+# Find optimal value of mtry
+optimal_mtry_demographic_SMOTE <- tuneRF(randomforest_demographic_data_train_SMOTE[,-11],randomforest_demographic_data_train_SMOTE$Performance.Tag,
+                                         ntreeTry=500, stepFactor=1.5, improve=0.01, trace=TRUE, plot=TRUE)
+best_mtry_demographic_SMOTE <- optimal_mtry_demographic_SMOTE[optimal_mtry_demographic_SMOTE[, 2] == min(optimal_mtry_demographic_SMOTE[, 2]), 1]
+print(optimal_mtry_demographic_SMOTE)
+print(best_mtry_demographic_SMOTE)
+
+randomforest_demographic_model_SMOTE <- randomForest(Performance.Tag ~ ., data=randomforest_demographic_data_train_SMOTE, proximity=FALSE,
+                                                ntree=200, mtry=best_mtry_demographic_SMOTE, do.trace=TRUE, na.action=na.omit)
+
+# Predict on Test Data
+randomforest_demographic_predicted_SMOTE <- predict(randomforest_demographic_model_SMOTE, newdata=randomforest_demographic_data_test)
+table(randomforest_demographic_predicted_SMOTE, randomforest_demographic_data_test$Performance.Tag)
+
+# randomforest_demographic_predicted_SMOTE     0     1
+#                                        0 14762   551
+#                                        1  4942   314
+
+#Confusion Matrix
+confmatrix_demographic_randomforest_SMOTE <- confusionMatrix(randomforest_demographic_predicted_SMOTE, randomforest_demographic_data_test$Performance.Tag)
+confmatrix_demographic_randomforest_SMOTE
+# Accuracy : 73.29%
+# Sensitivity: 74.91%
+# Specificity: 36.30%
+
+##################### MODEL x #######################
+################## Combined Data ####################
+################## Without SMOTE ####################
+# Build Random Forest Model
+randomforest_model <- randomForest(Performance.Tag ~ ., data=randomforest_data_train, proximity=FALSE,
+                                       ntree=500, mtry=5, do.trace=TRUE, na.action=na.omit)
+randomforest_model
+
+# Find optimal value of mtry
+optimal_mtry <- tuneRF(randomforest_data_train[,-28],randomforest_data_train$Performance.Tag,
+                       ntreeTry=200, stepFactor=1.5, improve=0.01, trace=TRUE, plot=TRUE)
+best_mtry <- optimal_mtry[optimal_mtry[, 2] == min(optimal_mtry[, 2]), 1]
+print(optimal_mtry)
+print(best_mtry)
+
+randomforest_model <- randomForest(Performance.Tag ~ ., data=randomforest_data_train, proximity=FALSE,
+                                       ntree=200, mtry=best_mtry, do.trace=TRUE, na.action=na.omit)
+
+# Predict on Test Data
+randomforest_predicted <- predict(randomforest_model, newdata=randomforest_data_test)
+table(randomforest_predicted, randomforest_data_test$Performance.Tag)
+
+# randomforest_predicted     0     1
+#                      0 19652   917
+#                      1     0     0
+
+# Confusion Matrix
+confmatrix_randomforest <- confusionMatrix(randomforest_predicted, randomforest_data_test$Performance.Tag)
+confmatrix_randomforest
+# Accuracy : 95.54%
+# Sensitivity: 100%
+# Specificity: 0%
+
+##################### MODEL x #######################
+################## Combined Data ####################
+#################### With SMOTE #####################
+# Check if data is balanced
+table(randomforest_data_train$Performance.Tag)
+#     0     1 
+# 46018  1974 
+# The data is unbalanced
+
+randomforest_data_train_SMOTE <- SMOTE(Performance.Tag ~ ., randomforest_data_train, perc.over = 100,k=5,perc.under=200)
+table(randomforest_data_train_SMOTE$Performance.Tag)
+#    0    1 
+# 3948 3948 
+
+# Build Random Forest Model
+set.seed(1)
+randomforest_model_SMOTE <- randomForest(Performance.Tag ~ ., data=randomforest_data_train_SMOTE, 
+                                   proximity=FALSE, ntree=500, mtry=5, do.trace=TRUE, na.action=na.omit)
+randomforest_model_SMOTE
+
+# Find optimal value of mtry
+optimal_mtry_SMOTE <- tuneRF(randomforest_data_train_SMOTE[,-28],randomforest_data_train_SMOTE$Performance.Tag, ntreeTry=500,
+                     stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
+best_mtry_SMOTE <- optimal_mtry_SMOTE[optimal_mtry_SMOTE[, 2] == min(optimal_mtry_SMOTE[, 2]), 1]
+print(optimal_mtry_SMOTE)
+print(best_mtry_SMOTE)
+
+randomforest_model_SMOTE <- randomForest(Performance.Tag ~ ., data=randomforest_data_train_SMOTE, proximity=FALSE,
+                                    ntree=200, mtry=best_mtry_SMOTE, do.trace=TRUE, na.action=na.omit)
+
+# Predict on Test Data
+randomforest_predicted_SMOTE <- predict(randomforest_model_SMOTE, newdata=randomforest_data_test)
+table(randomforest_predicted_SMOTE, randomforest_data_test$Performance.Tag)
+
+# randomforest_predicted_SMOTE     0     1
+#                            0 15471   576
+#                            1  4181   341
+
+# Confusion Matrix
+confmatrix_randomforest_SMOTE <- confusionMatrix(randomforest_predicted_SMOTE, randomforest_data_test$Performance.Tag)
+confmatrix_randomforest_SMOTE
+# Accuracy : 76.87%
+# Sensitivity: 78.72%
+# Specificity: 37.18%
+
+
+
+
+
+
+
+####################################################################################################
+######################################### DECISION TREE ############################################
+####################################################################################################
+
+####################################### PREPARING DATA #############################################
+decisiontree_data <- data
+
+# Convert Categorical Variables to factors
+categorical_variables <- c('Gender', 'Marital.Status..at.the.time.of.application.', 'Education', 'Profession',
+                            'Type.of.residence','Presence.of.open.auto.loan','Presence.of.open.home.loan','Performance.Tag')
+decisiontree_data[, categorical_variables] <- lapply(categorical_variables, function(x) as.factor(as.character(decisiontree_data[, x])))
+
+# Split into Train and Test
+set.seed(1)
+ntrain <- sample.split(decisiontree_data$Performance.Tag, SplitRatio = 0.50)
+decisiontree_data_train <- decisiontree_data[ntrain, ]
+decisiontree_data_test <- decisiontree_data[!ntrain, ]
+
+table(decisiontree_data_train$Performance.Tag)
+#     0     1 
+# 32835  1446 
+
+str(decisiontree_data_train)
+####################################### BUILDING MODELS ############################################
+##################### MODEL x #######################
+################## Combined Data ####################
+################## Without SMOTE ####################
+######## Build standard Decision Tree Model
+decisiontree_model_1 <- rpart(Performance.Tag ~ .,
+                              data = decisiontree_data_train,
+                              method = "class")                   
+prp(decisiontree_model_1)
+
+# Predict on Test Data
+decisiontree_model_1_predicted <- predict(decisiontree_model_1, decisiontree_data_test, type = "class")
+
+# Confusion Matrix
+confusionMatrix(decisiontree_model_1_predicted, decisiontree_data_test$Performance.Tag)
+# Accuracy : 95.78%
+# Sensitivity: 100%
+# Specificity: 0%
+
+######## Use Information Gain
+decisiontree_model_2 <- rpart(Performance.Tag ~ .,         
+                              data = decisiontree_data_train,     
+                              method = "class",            
+                              parms = list(split = "information"))
+prp(decisiontree_model_2)
+
+# Predict on Test Data
+decisiontree_model_2_predicted <- predict(decisiontree_model_2, decisiontree_data_test, type = "class")
+
+# Confusion Matrix
+confusionMatrix(decisiontree_model_2_predicted, decisiontree_data_test$Performance.Tag)
+# Accuracy : 95.78%
+# Sensitivity: 100%
+# Specificity: 0%
+
+######## Tune Hyperparameters
+decisiontree_model_3 <- rpart(Performance.Tag ~ .,                          # formula
+                                  data = decisiontree_data_train,           # training data
+                                  method = "class",                         # classification or regression
+                                  control = rpart.control(minsplit = 1000,  # min observations for node
+                                                          minbucket = 1000, # min observations for leaf node
+                                                          cp = 0.05))       # complexity parameter
+prp(decisiontree_model_3)
+
+# Predict on Test Data
+decisiontree_model_3_predicted <- predict(decisiontree_model_3, decisiontree_data_test, type = "class")
+
+# Confusion Matrix
+confusionMatrix(decisiontree_model_3_predicted, decisiontree_data_test$Performance.Tag)
+# Accuracy : 95.78%
+# Sensitivity: 100%
+# Specificity: 0%
+
+######## Increase Complexity
+decisiontree_model_4 <- rpart(Performance.Tag ~ .,                          # formula
+                              data = decisiontree_data_train,               # training data
+                              method = "class",                             # classification or regression
+                              control = rpart.control(minsplit = 1,         # min observations for node
+                                                      minbucket = 1,        # min observations for leaf node
+                                                      cp = 0.001))          # complexity parameter
+prp(decisiontree_model_4)
+
+# Predict on Test Data
+decisiontree_model_4_predicted <- predict(decisiontree_model_4, decisiontree_data_test, type = "class")
+
+# Confusion Matrix
+confusionMatrix(decisiontree_model_4_predicted, decisiontree_data_test$Performance.Tag)
+# Accuracy : 95.78%
+# Sensitivity: 100%
+# Specificity: 0%
+
+######## Cross Test 
+decisiontree_model_5 <- train(Performance.Tag ~ .,
+                              data = decisiontree_data_train,
+                              method = "rpart",
+                              metric = "Accuracy",
+                              trControl = trainControl(method = "cv", number = 5),
+                              tuneGrid = expand.grid(cp = seq(0, 0.02, 0.0025)),
+                              control = rpart.control(minsplit = 50,
+                                                      minbucket = 20))
+# Predict on Test Data
+decisiontree_model_5_predicted <- predict(decisiontree_model_5, decisiontree_data_test, type = "class")
+
+# Confusion Matrix
+confusionMatrix(decisiontree_model_5_predicted, decisiontree_data_test$Performance.Tag)
+# Accuracy : 95.78%
+# Sensitivity: 100%
+# Specificity: 0%
+
+ggplot(data = data.frame(decisiontree_model_5$results), aes(x = cp, y = Accuracy*100)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Complexity Parameter (CP)", y = "Accuracy", title = "CP vs Accuracy")
+
+# The model seems to just memorize the values as there is no proper distribution of data and is highly unbalanced.
+# So even though accuracy is high, sensitivity and specificity values are not acceptable. Hence model is rejected.
+
+##################### MODEL x #######################
+################## Combined Data ####################
+#################### With SMOTE #####################
